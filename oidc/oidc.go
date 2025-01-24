@@ -162,7 +162,7 @@ var supportedAlgorithms = map[string]bool{
 // parsing.
 //
 //	// Directly fetch the metadata document.
-// 	resp, err := http.Get("https://login.example.com/custom-metadata-path")
+//	resp, err := http.Get("https://login.example.com/custom-metadata-path")
 //	if err != nil {
 //		// ...
 //	}
@@ -228,7 +228,7 @@ func (p *ProviderConfig) NewProvider(ctx context.Context) *Provider {
 
 // NewProvider uses the OpenID Connect discovery mechanism to construct a Provider.
 // The issuer is the URL identifier for the service. For example: "https://accounts.google.com"
-// or "https://login.salesforce.com".
+// or "https://login.salesforce.com". The returned error is RequestError or ProviderError.
 //
 // OpenID Connect providers that don't implement discovery or host the discovery
 // document at a non-spec complaint path (such as requiring a URL parameter),
@@ -249,17 +249,32 @@ func NewProvider(ctx context.Context, issuer string) (*Provider, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read response body: %v", err)
+		return nil, &ProviderError{
+			msg:  fmt.Sprintf("unable to read response body: %v", err),
+			kind: providerErrorKindRead,
+			orig: err,
+			sc:   resp.StatusCode,
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: %s", resp.Status, body)
+		return nil, &ProviderError{
+			msg:  fmt.Sprintf("%s: %s", resp.Status, body),
+			kind: providerErrorKindStatus,
+			orig: err,
+			sc:   resp.StatusCode,
+		}
 	}
 
 	var p providerJSON
 	err = unmarshalResp(resp, body, &p)
 	if err != nil {
-		return nil, fmt.Errorf("oidc: failed to decode provider discovery object: %v", err)
+		return nil, &ProviderError{
+			msg:  fmt.Sprintf("oidc: failed to decode provider discovery object: %v", err),
+			kind: providerErrorKindDecode,
+			orig: err,
+			sc:   resp.StatusCode,
+		}
 	}
 
 	issuerURL, skipIssuerValidation := ctx.Value(issuerURLKey).(string)
@@ -267,7 +282,12 @@ func NewProvider(ctx context.Context, issuer string) (*Provider, error) {
 		issuerURL = issuer
 	}
 	if p.Issuer != issuerURL && !skipIssuerValidation {
-		return nil, fmt.Errorf("oidc: issuer did not match the issuer returned by provider, expected %q got %q", issuer, p.Issuer)
+		return nil, &ProviderError{
+			msg:  fmt.Sprintf("oidc: issuer did not match the issuer returned by provider, expected %q got %q", issuer, p.Issuer),
+			kind: providerErrorKindIssuer,
+			orig: err,
+			sc:   resp.StatusCode,
+		}
 	}
 	var algs []string
 	for _, a := range p.Algorithms {
